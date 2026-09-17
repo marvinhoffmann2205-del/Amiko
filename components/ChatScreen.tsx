@@ -5,9 +5,11 @@ import { AmivoEngine, Level, Session } from "@/lib/amivoEngine";
 import { controlAction } from "@/lib/controls";
 import { useMic } from "@/lib/useMic";
 import { SttTelemetryOps } from "@/lib/sttTelemetry";
+import { pickTtsProvider } from "@/lib/ttsProvider";
 import TutorPortrait from "./TutorPortrait";
 
 type Msg = { from: "user" | "cami"; text: string; tag?: string };
+const tts = pickTtsProvider();
 
 export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; level: Level }) {
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -15,12 +17,44 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
   const [status, setStatus] = useState("Online");
   const [portraitState, setPortraitState] = useState("welcome");
   const [showTelemetry, setShowTelemetry] = useState(false);
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
   const sessionRef = useRef<Session>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
 
-  function appendCami(text: string, tag?: string) {
+  // Barge-in wiring: if the learner taps the mic while Cami's audio is
+  // playing, useMic() calls this to stop her mid-sentence. Real interrupt
+  // support now; automatic VAD-triggered barge-in is a later phase.
+  useEffect(() => {
+    window.AmivoVoice = { interruptPlayback: () => tts.stop() };
+    return () => { window.AmivoVoice = undefined; };
+  }, []);
+
+  function speak(text: string) {
+    setPortraitState("speaking"); setStatus(`${tutor.name} is speaking…`);
+    tts.speak({
+      text,
+      tutorId: tutor.id,
+      onAudioStart: () => { setPortraitState("speaking"); setStatus(`${tutor.name} is speaking…`); },
+      onAudioEnd: () => { setPortraitState("welcome"); setStatus("Online"); },
+      onError: (code) => {
+        // Fails open: the transcript is already on screen either way,
+        // this only affects whether it's also spoken aloud.
+        setPortraitState("welcome"); setStatus("Online");
+        setVoiceNotice(
+          code === "autoplay-blocked"
+            ? "Cami's voice is ready but the browser blocked autoplay — tap anywhere and try again."
+            : code === "tts_not_configured" || code === "voice_not_configured"
+            ? "Cami's voice isn't configured on the server yet."
+            : "Cami's voice hit a snag — showing text only for now."
+        );
+      }
+    });
+  }
+
+  function appendCami(text: string, tag?: string, speakAloud = true) {
     setMessages(m => [...m, { from: "cami", text, tag }]);
+    if (speakAloud) speak(text);
   }
 
   function respond(userText: string) {
@@ -28,9 +62,7 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
     setStatus("Thinking…"); setPortraitState("thinking");
     setTimeout(() => {
       const reply = AmivoEngine.reactTo(tutor, level, userText, sessionRef.current);
-      setPortraitState("speaking"); setStatus(`${tutor.name} is speaking…`);
       appendCami(reply);
-      setTimeout(() => { setPortraitState("welcome"); setStatus("Online"); }, 1200);
     }, 500 + Math.random() * 400);
   }
 
@@ -114,7 +146,9 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
       </div>
 
       <div className="voice-note">
-        {mic.supported ? "Tap the mic and speak, or type below." : "Voice input isn't supported in this browser — type your message below."}
+        {voiceNotice
+          ? voiceNotice
+          : mic.supported ? "Tap the mic and speak, or type below." : "Voice input isn't supported in this browser — type your message below."}
       </div>
 
       <div className="composer">

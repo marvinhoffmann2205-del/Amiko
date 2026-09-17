@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { TutorProfile } from "@/lib/tutors";
 import { Level } from "@/lib/amivoEngine";
+import { pickTtsProvider } from "@/lib/ttsProvider";
 import TutorPortrait from "./TutorPortrait";
 
 const LEVELS: { level: Level; title: string; desc: string }[] = [
@@ -12,6 +13,15 @@ const LEVELS: { level: Level; title: string; desc: string }[] = [
 
 export default function LevelSelectScreen({ tutor, onStart }: { tutor: TutorProfile; onStart: (level: Level) => void }) {
   const [selected, setSelected] = useState<Level | null>(null);
+
+  function handleStart() {
+    if (!selected) return;
+    // Must happen synchronously inside this click handler, or iOS Safari
+    // will silently block Cami's very first spoken greeting on the next screen.
+    pickTtsProvider().unlock?.();
+    onStart(selected);
+  }
+
   return (
     <div className="screen-body level-screen">
       <div>
@@ -32,7 +42,7 @@ export default function LevelSelectScreen({ tutor, onStart }: { tutor: TutorProf
         ))}
       </div>
       <div className="ob-foot">
-        <button className="btn btn-primary btn-block" disabled={!selected} onClick={() => selected && onStart(selected)}>
+        <button className="btn btn-primary btn-block" disabled={!selected} onClick={handleStart}>
           Start Talking
         </button>
       </div>

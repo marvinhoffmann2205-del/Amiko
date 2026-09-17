@@ -49,8 +49,8 @@ export const TUTORS: Record<string, TutorProfile> = {
     interests: ["music", "coffee", "travel", "weekend plans"],
     teachingStyle: "reacts naturally first, teaches when useful, corrects sparingly",
     conversationStyle: "concise, question-driven, leaves room for the learner to talk",
-    voiceProvider: null,
-    voiceId: null,
+    voiceProvider: "cartesia",
+    voiceId: null, // actual Cartesia voice UUID lives server-side in CARTESIA_VOICE_ID_CAMI, not in source
     avatarProvider: "static-svg",
     avatarId: "cami-v1",
     visual: {
