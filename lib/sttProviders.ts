@@ -1,0 +1,236 @@
+// STT provider abstraction — same interface shape as the artifact prototype.
+// Two implementations:
+//   1. WebSpeechSttProvider — browser-native, no key, kept as a fallback.
+//   2. DeepgramSttProvider  — REAL implementation. Mints a short-lived
+//      token from our own backend (/api/stt-token), then streams raw
+//      PCM audio straight from the microphone to Deepgram over a
+//      WebSocket the browser opens directly (token-authenticated).
+//
+// Deliberately uses raw PCM via ScriptProcessorNode rather than
+// MediaRecorder: iOS Safari's MediaRecorder only supports audio/mp4
+// (AAC), which Deepgram's live streaming endpoint does not accept.
+// Raw linear16 PCM over Web Audio API works identically across
+// Chrome, Firefox, and Safari/iOS — which is the whole point of this
+// milestone.
+
+export type SttCallbacks = {
+  onSpeechStart?: () => void;
+  onPartial?: (text: string) => void;
+  onFinal?: (text: string) => void;
+  onLevel?: (level: number) => void; // 0..1, for VAD/level meter UI
+  onSilenceTimeout?: () => void;
+  onError?: (code: string) => void;
+  onEnd?: () => void;
+};
+
+export interface SttProvider {
+  name: string;
+  costPerMinute: number;
+  isSupported(): boolean;
+  start(cb: SttCallbacks): void | Promise<void>;
+  stop(): void;
+}
+
+/* ---------------- 1. Interim fallback: browser-native ---------------- */
+
+export const WebSpeechSttProvider: SttProvider = (() => {
+  let rec: any = null;
+  let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+  let activeCb: SttCallbacks | null = null;
+
+  function resetSilenceTimer(cb: SttCallbacks) {
+    if (silenceTimer) clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => cb.onSilenceTimeout?.(), 3500);
+  }
+
+  return {
+    name: "webspeech (interim fallback, no key required)",
+    costPerMinute: 0,
+    isSupported() {
+      if (typeof window === "undefined") return false;
+      return !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+    },
+    start(cb: SttCallbacks) {
+      activeCb = cb;
+      const Ctor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      rec = new Ctor();
+      rec.lang = "es-CO";
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.onresult = (e: any) => {
+        let interim = "", final = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) final += e.results[i][0].transcript;
+          else interim += e.results[i][0].transcript;
+        }
+        resetSilenceTimer(cb);
+        if (interim) cb.onPartial?.(interim);
+        if (final) cb.onFinal?.(final.trim());
+      };
+      rec.onerror = (e: any) => cb.onError?.(e.error || "unknown-error");
+      rec.onend = () => { if (silenceTimer) clearTimeout(silenceTimer); cb.onEnd?.(); };
+      try { rec.start(); cb.onSpeechStart?.(); } catch { cb.onError?.("start-failed"); return; }
+      resetSilenceTimer(cb);
+    },
+    stop() {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      try { rec?.stop(); } catch {}
+    }
+  };
+})();
+
+/* ---------------- 2. Real provider: Deepgram streaming ---------------- */
+
+export const DeepgramSttProvider: SttProvider = (() => {
+  let ws: WebSocket | null = null;
+  let audioCtx: AudioContext | null = null;
+  let processor: ScriptProcessorNode | null = null;
+  let analyser: AnalyserNode | null = null;
+  let stream: MediaStream | null = null;
+  let levelRAF: number | null = null;
+  let reconnectAttempts = 0;
+  const MAX_RECONNECTS = 2;
+  let stopped = false;
+
+  function floatTo16BitPCM(float32: Float32Array): ArrayBuffer {
+    const buffer = new ArrayBuffer(float32.length * 2);
+    const view = new DataView(buffer);
+    for (let i = 0; i < float32.length; i++) {
+      let s = Math.max(-1, Math.min(1, float32[i]));
+      view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    return buffer;
+  }
+
+  async function mintToken(): Promise<string> {
+    const res = await fetch("/api/stt-token");
+    if (!res.ok) throw new Error("token-endpoint-failed");
+    const data = await res.json();
+    return data.token as string;
+  }
+
+  function teardownAudio() {
+    if (levelRAF) cancelAnimationFrame(levelRAF);
+    levelRAF = null;
+    try { processor?.disconnect(); } catch {}
+    try { analyser?.disconnect(); } catch {}
+    try { audioCtx?.close(); } catch {}
+    stream?.getTracks().forEach(t => t.stop());
+    processor = null; analyser = null; audioCtx = null; stream = null;
+  }
+
+  async function connect(cb: SttCallbacks) {
+    let token: string;
+    try {
+      token = await mintToken();
+    } catch {
+      cb.onError?.("token-mint-failed");
+      return;
+    }
+
+    // Deepgram documents a brief propagation delay after minting a
+    // short-lived key before it's usable — small buffer here avoids
+    // spurious auth failures on the very first connection attempt.
+    await new Promise(r => setTimeout(r, 300));
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err: any) {
+      cb.onError?.((err?.name || "getUserMedia-failed"));
+      return;
+    }
+
+    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const sampleRate = audioCtx.sampleRate; // iOS commonly reports 44100/48000 — tell Deepgram the real rate
+    const source = audioCtx.createMediaStreamSource(stream);
+
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+
+    const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-3&language=es&interim_results=true&smart_format=true&punctuate=true&encoding=linear16&sample_rate=${sampleRate}&channels=1`;
+    ws = new WebSocket(wsUrl, ["token", token]);
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => {
+      cb.onSpeechStart?.();
+      // ScriptProcessorNode is deprecated in favor of AudioWorklet, but
+      // remains broadly supported (including iOS Safari) and is far
+      // simpler to wire for this first working milestone.
+      processor = audioCtx!.createScriptProcessor(4096, 1, 1);
+      const silentGain = audioCtx!.createGain();
+      silentGain.gain.value = 0; // keep the graph alive without audible echo
+      source.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(audioCtx!.destination);
+
+      processor.onaudioprocess = (e) => {
+        const input = e.inputBuffer.getChannelData(0);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(floatTo16BitPCM(input));
+        }
+        // level meter
+        if (analyser) {
+          const data = new Uint8Array(analyser.frequencyBinCount);
+          analyser.getByteFrequencyData(data);
+          const avg = data.reduce((a, b) => a + b, 0) / data.length;
+          cb.onLevel?.(Math.min(1, avg / 90));
+        }
+      };
+    };
+
+    ws.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data);
+        const alt = msg.channel?.alternatives?.[0];
+        if (!alt) return;
+        const text = alt.transcript || "";
+        if (!text) return;
+        if (msg.is_final) cb.onFinal?.(text);
+        else cb.onPartial?.(text);
+      } catch {
+        // non-JSON or unexpected frame — ignore rather than crash the session
+      }
+    };
+
+    ws.onerror = () => {
+      if (stopped) return;
+      if (reconnectAttempts < MAX_RECONNECTS) {
+        reconnectAttempts += 1;
+        teardownAudio();
+        setTimeout(() => { if (!stopped) connect(cb); }, 500 * reconnectAttempts);
+      } else {
+        cb.onError?.("network");
+      }
+    };
+
+    ws.onclose = () => {
+      if (!stopped) cb.onEnd?.();
+    };
+  }
+
+  return {
+    name: "deepgram (nova-3 streaming)",
+    costPerMinute: 0.0043, // approximate — confirm against current Deepgram pricing
+    isSupported() {
+      return typeof window !== "undefined" && !!navigator.mediaDevices?.getUserMedia && "WebSocket" in window;
+    },
+    async start(cb: SttCallbacks) {
+      stopped = false;
+      reconnectAttempts = 0;
+      await connect(cb);
+    },
+    stop() {
+      stopped = true;
+      try { ws?.close(); } catch {}
+      teardownAudio();
+      ws = null;
+    }
+  };
+})();
+
+export function pickSttProvider(): SttProvider | null {
+  if (DeepgramSttProvider.isSupported()) return DeepgramSttProvider;
+  if (WebSpeechSttProvider.isSupported()) return WebSpeechSttProvider;
+  return null;
+}
