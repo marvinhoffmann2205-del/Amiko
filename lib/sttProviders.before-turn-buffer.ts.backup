@@ -181,7 +181,6 @@ export const DeepgramSttProvider: SttProvider = (() => {
     };
 
     let finalTranscript = "";
-    let utteranceEndTimer: ReturnType<typeof setTimeout> | null = null;
 
     ws.onmessage = (evt) => {
       try {
@@ -190,16 +189,11 @@ export const DeepgramSttProvider: SttProvider = (() => {
 
       // Deepgram detected that the speaker has actually finished the turn.
       if (msg.type === "UtteranceEnd") {
-        if (utteranceEndTimer) clearTimeout(utteranceEndTimer);
-
-        utteranceEndTimer = setTimeout(() => {
-          const complete = finalTranscript.trim();
-          if (complete) {
-            cb.onFinal?.(complete);
-            finalTranscript = "";
-          }
-        }, 900);
-
+        const complete = finalTranscript.trim();
+        if (complete) {
+          cb.onFinal?.(complete);
+          finalTranscript = "";
+        }
         return;
       }
         const alt = msg.channel?.alternatives?.[0];

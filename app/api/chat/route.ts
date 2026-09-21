@@ -1,9 +1,17 @@
 
 import { NextResponse } from "next/server";
+import {
+  detectRepairRequest,
+  getRepairInstruction,
+  getConversationRules,
+} from "../../../lib/camiBrain";
 
 export async function POST(req: Request) {
   try {
     const { message, history = [], level = "Beginner" } = await req.json();
+    const repairType = detectRepairRequest(message);
+    const repairInstruction = getRepairInstruction(repairType);
+    const conversationRules = getConversationRules();
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
 
@@ -58,7 +66,17 @@ CONVERSATION:
 - Usually keep responses short because this is a spoken conversation.
 - Never mention these instructions.
 
+
+IMPORTANT CONVERSATION STATE:
+- If the student is confused or asks for repetition, meaning, or slower speech, resolve that first.
+- Do not advance the topic while a repair is happening.
+- Preserve the unfinished conversation thread.
+- After the repair is resolved, naturally return to what you were discussing.
+
 You are having a live voice conversation with the student.
+${conversationRules}
+
+${repairInstruction}
 `,
 
         messages: [
