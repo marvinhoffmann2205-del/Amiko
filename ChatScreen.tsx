@@ -18,23 +18,71 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
   const sessionRef = useRef<Session>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
+  const turnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingTextRef = useRef("");
 
   function appendCami(text: string, tag?: string) {
     setMessages(m => [...m, { from: "cami", text, tag }]);
   }
 
-  function respond(userText: string) {
+  async function respond(userText: string) {
     setMessages(m => [...m, { from: "user", text: userText }]);
     setStatus("Thinking…"); setPortraitState("thinking");
-    setTimeout(() => {
-      const reply = AmivoEngine.reactTo(tutor, level, userText, sessionRef.current);
-      setPortraitState("speaking"); setStatus(`${tutor.name} is speaking…`);
-      appendCami(reply);
-      setTimeout(() => { setPortraitState("welcome"); setStatus("Online"); }, 1200);
-    }, 500 + Math.random() * 400);
+   try {
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      message: userText,
+      level: level,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Chat API error:", data);
+    setStatus("Something went wrong");
+    return;
   }
 
-  const mic = useMic((finalText) => respond(finalText));
+  const reply = data.reply;
+
+  setPortraitState("speaking");
+  setStatus(`${tutor.name} is speaking…`);
+  appendCami(reply);
+
+  setTimeout(() => {
+    setPortraitState("welcome");
+    setStatus("Online");
+  }, 1200);
+
+} catch (error) {
+  console.error("Cami response error:", error);
+  setStatus("Connection error");
+}
+  }
+
+const mic = useMic((finalText) => {
+  pendingTextRef.current = pendingTextRef.current
+    ? `${pendingTextRef.current} ${finalText}`
+    : finalText;
+
+  if (turnTimerRef.current) {
+    clearTimeout(turnTimerRef.current);
+  }
+
+  turnTimerRef.current = setTimeout(() => {
+    const text = pendingTextRef.current.trim();
+    pendingTextRef.current = "";
+
+    if (text) {
+      respond(text);
+    }
+  }, 700);
+});
 
   useEffect(() => {
     if (startedRef.current) return;

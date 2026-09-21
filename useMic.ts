@@ -49,11 +49,10 @@ export function useMic(onFinalText: (text: string) => void) {
         setPartial("");
         SttTelemetryOps.recordFinal(telemetry, text);
         bumpTelemetry();
-        stop();
         onFinalText(text);
       },
       onLevel: (l) => setLevel(l),
-      onSilenceTimeout: () => stop(),
+      onSilenceTimeout: () => {},
       onError: (code) => {
         setLastError(code);
         setState("error");

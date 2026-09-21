@@ -1,3 +1,4 @@
+import { detectTurnEnd } from "./turnManager";
 // STT provider abstraction — same interface shape as the artifact prototype.
 // Two implementations:
 //   1. WebSpeechSttProvider — browser-native, no key, kept as a fallback.
@@ -148,7 +149,7 @@ export const DeepgramSttProvider: SttProvider = (() => {
     analyser.fftSize = 512;
     source.connect(analyser);
 
-    const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-3&language=es&interim_results=true&smart_format=true&punctuate=true&encoding=linear16&sample_rate=${sampleRate}&channels=1`;
+    const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-3&language=es&interim_results=true&smart_format=true&utterance_end_ms=1200&vad_events=true&punctuate=true&encoding=linear16&sample_rate=${sampleRate}&channels=1`;
     ws = new WebSocket(wsUrl, ["token", token]);
     ws.binaryType = "arraybuffer";
 
@@ -179,14 +180,29 @@ export const DeepgramSttProvider: SttProvider = (() => {
       };
     };
 
+    let finalTranscript = "";
+
     ws.onmessage = (evt) => {
       try {
         const msg = JSON.parse(evt.data);
+
+      // Deepgram detected that the speaker has actually finished the turn.
+      if (msg.type === "UtteranceEnd") {
+        const complete = finalTranscript.trim();
+        if (complete) {
+          cb.onFinal?.(complete);
+          finalTranscript = "";
+        }
+        return;
+      }
         const alt = msg.channel?.alternatives?.[0];
         if (!alt) return;
         const text = alt.transcript || "";
         if (!text) return;
-        if (msg.is_final) cb.onFinal?.(text);
+        if (msg.is_final) {
+        finalTranscript += (finalTranscript ? " " : "") + text;
+        cb.onPartial?.(finalTranscript);
+      }
         else cb.onPartial?.(text);
       } catch {
         // non-JSON or unexpected frame — ignore rather than crash the session

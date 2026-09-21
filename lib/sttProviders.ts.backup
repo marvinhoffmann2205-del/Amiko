@@ -1,4 +1,4 @@
-import { detectTurnEnd } from "./lib/turnManager";
+import { detectTurnEnd } from "./turnManager";
 // STT provider abstraction — same interface shape as the artifact prototype.
 // Two implementations:
 //   1. WebSpeechSttProvider — browser-native, no key, kept as a fallback.
@@ -88,7 +88,6 @@ export const DeepgramSttProvider: SttProvider = (() => {
   let processor: ScriptProcessorNode | null = null;
   let analyser: AnalyserNode | null = null;
   let stream: MediaStream | null = null;
-  let source: MediaStreamAudioSourceNode | null = null;
   let levelRAF: number | null = null;
   let reconnectAttempts = 0;
   const MAX_RECONNECTS = 2;
@@ -144,13 +143,13 @@ export const DeepgramSttProvider: SttProvider = (() => {
 
     audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
     const sampleRate = audioCtx.sampleRate; // iOS commonly reports 44100/48000 — tell Deepgram the real rate
-    source = audioCtx.createMediaStreamSource(stream);
+    const source = audioCtx.createMediaStreamSource(stream);
 
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 512;
     source.connect(analyser);
 
-    const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-3&language=es&interim_results=true&smart_format=true&punctuate=true&encoding=linear16&sample_rate=${sampleRate}&channels=1&endpointing=3500`;
+    const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-3&language=es&interim_results=true&smart_format=true&punctuate=true&encoding=linear16&sample_rate=${sampleRate}&channels=1`;
     ws = new WebSocket(wsUrl, ["token", token]);
     ws.binaryType = "arraybuffer";
 
@@ -159,17 +158,12 @@ export const DeepgramSttProvider: SttProvider = (() => {
       // ScriptProcessorNode is deprecated in favor of AudioWorklet, but
       // remains broadly supported (including iOS Safari) and is far
       // simpler to wire for this first working milestone.
-    const ctx = audioCtx;
-if (!ctx) throw new Error("audio-context-missing");
-
-processor = ctx.createScriptProcessor(4096, 1, 1);
-const silentGain = ctx.createGain();
-silentGain.gain.value = 0;
-
-source = ctx.createMediaStreamSource(stream!);
-source.connect(processor);
-processor.connect(silentGain);
-silentGain.connect(ctx.destination);
+      processor = audioCtx!.createScriptProcessor(4096, 1, 1);
+      const silentGain = audioCtx!.createGain();
+      silentGain.gain.value = 0; // keep the graph alive without audible echo
+      source.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(audioCtx!.destination);
 
       processor.onaudioprocess = (e) => {
         const input = e.inputBuffer.getChannelData(0);
@@ -185,46 +179,16 @@ silentGain.connect(ctx.destination);
         }
       };
     };
-let finalTranscript = "";
-let finalTimer: ReturnType<typeof setTimeout> | null = null;
+
     ws.onmessage = (evt) => {
       try {
         const msg = JSON.parse(evt.data);
         const alt = msg.channel?.alternatives?.[0];
         if (!alt) return;
         const text = alt.transcript || "";
-        if (msg.is_final) {
-          if (finalTimer) clearTimeout(finalTimer);
-  finalTranscript += (finalTranscript ? " " : "") + text;
-
- if (msg.speech_final || msg.type === "UtteranceEnd") {
-    if (finalTimer) clearTimeout(finalTimer);
-
-    finalTimer = setTimeout(function checkTurnEnd() {
-  const transcript = finalTranscript.trim();
-
-  if (!transcript) {
-    finalTimer = null;
-    return;
-  }
-
-  const decision = detectTurnEnd(transcript);
-
-  if (decision === "WAIT") {
-    finalTimer = setTimeout(checkTurnEnd, 700);
-    return;
-  }
-
-  cb.onFinal?.(transcript);
-  finalTranscript = "";
-  finalTimer = null;
-}, 700);
-  }
-
-} else {
-  cb.onPartial?.((finalTranscript + " " + text).trim());
-}
-
+        if (!text) return;
+        if (msg.is_final) cb.onFinal?.(text);
+        else cb.onPartial?.(text);
       } catch {
         // non-JSON or unexpected frame — ignore rather than crash the session
       }
