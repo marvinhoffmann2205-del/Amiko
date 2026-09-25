@@ -71,6 +71,7 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
   }
 
   async function respond(userText: string) {
+    const historyBeforeUser = [...messages, { from: "user" as const, text: userText }];
   setMessages(m => [...m, { from: "user", text: userText }]);
   setStatus("Thinking...");
   setPortraitState("thinking");
@@ -83,7 +84,7 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
       },
       body: JSON.stringify({
         message: userText,
-        history: messages.map(m => ({
+        history: historyBeforeUser.map(m => ({
           role: m.from === "user" ? "user" : "assistant",
           content: m.text,
         })),

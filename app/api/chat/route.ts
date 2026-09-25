@@ -9,6 +9,11 @@ import {
 export async function POST(req: Request) {
   try {
     const { message, history = [], level = "Beginner" } = await req.json();
+    console.log("CHAT DEBUG:", {
+  message,
+  historyLength: history.length,
+  history,
+});
     const repairType = detectRepairRequest(message);
     const repairInstruction = getRepairInstruction(repairType);
     const conversationRules = getConversationRules();

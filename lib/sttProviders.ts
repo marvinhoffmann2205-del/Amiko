@@ -135,7 +135,15 @@ export const DeepgramSttProvider: SttProvider = (() => {
     await new Promise(r => setTimeout(r, 300));
 
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1,
+  },
+});
+
     } catch (err: any) {
       cb.onError?.((err?.name || "getUserMedia-failed"));
       return;
@@ -149,7 +157,7 @@ export const DeepgramSttProvider: SttProvider = (() => {
     analyser.fftSize = 512;
     source.connect(analyser);
 
-    const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-3&language=es&interim_results=true&smart_format=true&utterance_end_ms=1200&vad_events=true&punctuate=true&encoding=linear16&sample_rate=${sampleRate}&channels=1`;
+    const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-3&language=multi&interim_results=true&smart_format=true&utterance_end_ms=1200&vad_events=true&punctuate=true&encoding=linear16&sample_rate=${sampleRate}&channels=1`;
     ws = new WebSocket(wsUrl, ["token", token]);
     ws.binaryType = "arraybuffer";
 

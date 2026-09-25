@@ -25,8 +25,10 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
     setMessages(m => [...m, { from: "cami", text, tag }]);
   }
 
-  async function respond(userText: string) {
-    setMessages(m => [...m, { from: "user", text: userText }]);
+async function respond(userText: string) {
+  const historyBeforeUser = [...messages, { from: "user" as const, text: userText }];
+
+  setMessages(m => [...m, { from: "user", text: userText }]);
     setStatus("Thinking…"); setPortraitState("thinking");
    try {
   const response = await fetch("/api/chat", {
@@ -34,11 +36,17 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
     headers: {
       "Content-Type": "application/json",
     },
+
     body: JSON.stringify({
-      message: userText,
-      level: level,
-    }),
-  });
+  message: userText,
+ history: historyBeforeUser.map(m => ({
+    role: m.from === "user" ? "user" : "assistant",
+    content: m.text,
+  })),
+  level: level,
+  tutor: tutor.name,
+}),
+});
 
   const data = await response.json();
 
