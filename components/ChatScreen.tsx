@@ -22,6 +22,7 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
   const scrollRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
   const restartListeningRef = useRef<(() => void) | null>(null);
+  const stopListeningRef = useRef<(() => void) | null>(null);
 
   // Barge-in wiring: if the learner taps the mic while Cami's audio is
   // playing, useMic() calls this to stop her mid-sentence. Real interrupt
