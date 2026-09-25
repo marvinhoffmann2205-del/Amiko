@@ -125,7 +125,18 @@ export async function extractMemories(
       .replace(/```/g, "")
       .trim();
 
-    const parsed = JSON.parse(cleaned) as MemoryExtraction;
+    // Claude may occasionally wrap valid JSON with extra text.
+    // Extract the outer JSON object before parsing.
+    const jsonStart = cleaned.indexOf("{");
+    const jsonEnd = cleaned.lastIndexOf("}");
+
+    if (jsonStart === -1 || jsonEnd === -1 || jsonEnd < jsonStart) {
+      console.error("Memory extraction returned no JSON:", cleaned);
+      return [];
+    }
+
+    const jsonText = cleaned.slice(jsonStart, jsonEnd + 1);
+    const parsed = JSON.parse(jsonText) as MemoryExtraction;
 
     return Array.isArray(parsed.memories) ? parsed.memories : [];
   } catch (error) {
