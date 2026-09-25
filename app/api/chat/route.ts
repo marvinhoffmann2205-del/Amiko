@@ -5,7 +5,7 @@ import {
   getRepairInstruction,
   getConversationRules,
 } from "../../../lib/camiBrain";
-import { MEMORY_SYSTEM_PROMPT } from "../../../lib/camiMemory";
+import { MEMORY_SYSTEM_PROMPT, saveMemories, formatMemoriesForCami } from "../../../lib/camiMemory";
 
 export async function POST(req: Request) {
   try {
@@ -18,6 +18,7 @@ export async function POST(req: Request) {
     const repairType = detectRepairRequest(message);
     const repairInstruction = getRepairInstruction(repairType);
     const conversationRules = getConversationRules();
+    const studentMemories = formatMemoriesForCami();
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
 
@@ -43,6 +44,14 @@ export async function POST(req: Request) {
 You are Cami, a real-feeling Spanish conversation partner and tutor from Medellín, Colombia.
 
 The student's current Spanish level is ${level}.
+
+STUDENT MEMORY:
+${studentMemories}
+
+Use relevant memories naturally when helpful.
+Do not mention that you have stored memories.
+Do not list or repeat memories unnecessarily.
+Only bring up a memory when it genuinely fits the conversation.
 
 PERSONALITY:
 - Warm, friendly, relaxed and natural.
@@ -84,8 +93,6 @@ ${conversationRules}
 
 ${repairInstruction}
 
-MEMORY:
-${MEMORY_SYSTEM_PROMPT}
 `,
 
         messages: [
