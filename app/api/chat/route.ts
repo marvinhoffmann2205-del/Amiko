@@ -5,6 +5,7 @@ import {
   getRepairInstruction,
   getConversationRules,
 } from "../../../lib/camiBrain";
+import { MEMORY_SYSTEM_PROMPT } from "../../../lib/camiMemory";
 
 export async function POST(req: Request) {
   try {
@@ -82,6 +83,9 @@ You are having a live voice conversation with the student.
 ${conversationRules}
 
 ${repairInstruction}
+
+MEMORY:
+${MEMORY_SYSTEM_PROMPT}
 `,
 
         messages: [

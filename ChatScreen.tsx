@@ -26,7 +26,7 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
   }
 
 async function respond(userText: string) {
-  const historyBeforeUser = [...messages, { from: "user" as const, text: userText }];
+const historyBeforeUser = [...messages];
 
   setMessages(m => [...m, { from: "user", text: userText }]);
     setStatus("Thinking…"); setPortraitState("thinking");
