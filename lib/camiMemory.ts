@@ -85,3 +85,51 @@ export function formatMemoriesForCami(): string {
     .map((m) => `- ${m.fact}`)
     .join("\n");
 }
+
+export async function extractMemories(
+  message: string,
+  apiKey: string
+): Promise<MemoryExtraction["memories"]> {
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 300,
+        system: MEMORY_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: message,
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("Memory extraction API error");
+      return [];
+    }
+
+    const data = await response.json();
+    const text =
+      data.content?.find((item: any) => item.type === "text")?.text ?? "";
+
+    const cleaned = text
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
+
+    const parsed = JSON.parse(cleaned) as MemoryExtraction;
+
+    return Array.isArray(parsed.memories) ? parsed.memories : [];
+  } catch (error) {
+    console.error("Memory extraction failed:", error);
+    return [];
+  }
+}

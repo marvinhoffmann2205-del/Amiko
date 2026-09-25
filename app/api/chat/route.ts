@@ -5,7 +5,7 @@ import {
   getRepairInstruction,
   getConversationRules,
 } from "../../../lib/camiBrain";
-import { MEMORY_SYSTEM_PROMPT, saveMemories, formatMemoriesForCami } from "../../../lib/camiMemory";
+import { MEMORY_SYSTEM_PROMPT, saveMemories, formatMemoriesForCami, extractMemories } from "../../../lib/camiMemory";
 
 export async function POST(req: Request) {
   try {
@@ -117,6 +117,18 @@ ${repairInstruction}
 
     const reply =
       data.content?.find((item: any) => item.type === "text")?.text ?? "";
+
+    // Extract useful long-term student memories without blocking the reply.
+    extractMemories(message, apiKey)
+      .then((memories) => {
+        if (memories.length > 0) {
+          saveMemories(memories);
+          console.log("Cami saved memories:", memories);
+        }
+      })
+      .catch((error) => {
+        console.error("Memory extraction failed:", error);
+      });
 
     return NextResponse.json({ reply });
   } catch (error) {
