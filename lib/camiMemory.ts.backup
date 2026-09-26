@@ -1,4 +1,3 @@
-import { supabase } from "./supabase";
 export type CamiMemory = {
   id: string;
   fact: string;
@@ -62,21 +61,18 @@ If nothing is worth remembering, return:
 `;
 let memoryStore: MemoryExtraction["memories"] = [];
 
-export async function saveMemories(
-  memories: MemoryExtraction["memories"]
-): Promise<void> {
-  for (const memory of memories) {
-    const { error } = await supabase.from("student_memories").insert({
-      user_id: "test-user-1",
-      category: memory.category,
-      importance: memory.importance,
-      fact: memory.fact,
-    });
+export function getMemories(): MemoryExtraction["memories"] {
+  return memoryStore;
+}
 
-    if (error) {
-      console.error("Supabase memory save failed:", error);
-    } else {
-      console.log("Memory saved to Supabase:", memory.fact);
+export function saveMemories(memories: MemoryExtraction["memories"]): void {
+  for (const memory of memories) {
+    const existing = memoryStore.find(
+      (m) => m.fact.toLowerCase() === memory.fact.toLowerCase()
+    );
+
+    if (!existing) {
+      memoryStore.push(memory);
     }
   }
 }
