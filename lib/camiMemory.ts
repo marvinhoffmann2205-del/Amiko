@@ -1,4 +1,4 @@
-import { supabase } from "./supabase";
+import { supabaseAdmin as supabase } from "./supabase";
 export type CamiMemory = {
   id: string;
   fact: string;
@@ -80,7 +80,20 @@ export async function saveMemories(
     }
   }
 }
+export async function loadMemories(): Promise<void> {
+  const { data, error } = await supabase
+    .from("student_memories")
+    .select("*")
+    .eq("user_id", "test-user-1")
+    .order("importance", { ascending: false });
 
+  if (error) {
+    console.error("Supabase memory load failed:", error);
+    return;
+  }
+
+  memoryStore = data ?? [];
+}
 export function formatMemoriesForCami(): string {
   if (memoryStore.length === 0) return "No saved student memories yet.";
 

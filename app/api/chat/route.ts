@@ -5,7 +5,7 @@ import {
   getRepairInstruction,
   getConversationRules,
 } from "../../../lib/camiBrain";
-import { MEMORY_SYSTEM_PROMPT, saveMemories, formatMemoriesForCami, extractMemories } from "../../../lib/camiMemory";
+import { MEMORY_SYSTEM_PROMPT, saveMemories, formatMemoriesForCami, extractMemories, loadMemories } from "../../../lib/camiMemory";
 
 export async function POST(req: Request) {
   try {
@@ -18,6 +18,8 @@ export async function POST(req: Request) {
     const repairType = detectRepairRequest(message);
     const repairInstruction = getRepairInstruction(repairType);
     const conversationRules = getConversationRules();
+  
+    await loadMemories();
     const studentMemories = formatMemoriesForCami();
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
