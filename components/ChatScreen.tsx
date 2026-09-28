@@ -41,6 +41,7 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
     tutorId: tutor.id,
 
     onAudioStart: () => {
+      mic.stop();
       setPortraitState("speaking");
       setStatus(`${tutor.name} is speaking...`);
     },
@@ -48,6 +49,7 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
     onAudioEnd: () => {
   setPortraitState("welcome");
   setStatus("Online");
+  mic.start();
 },
 
     onError: (code: string) => {

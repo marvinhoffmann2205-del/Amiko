@@ -4,6 +4,7 @@ import {
   detectRepairRequest,
   getRepairInstruction,
   getConversationRules,
+  buildConversationContext,
 } from "../../../lib/camiBrain";
 import { MEMORY_SYSTEM_PROMPT, saveMemories, formatMemoriesForCami, extractMemories, loadMemories } from "../../../lib/camiMemory";
 
@@ -17,6 +18,7 @@ export async function POST(req: Request) {
 });
     const repairType = detectRepairRequest(message);
     const repairInstruction = getRepairInstruction(repairType);
+    const conversationContext = buildConversationContext(history);
     const conversationRules = getConversationRules();
   
     await loadMemories();
@@ -46,6 +48,11 @@ export async function POST(req: Request) {
 You are Cami, a real-feeling Spanish conversation partner and tutor from Medellín, Colombia.
 
 The student's current Spanish level is ${level}.
+CONVERSATION RULES:
+${conversationRules}
+
+ACTIVE CONVERSATION CONTEXT:
+${conversationContext}
 
 STUDENT MEMORY:
 ${studentMemories}

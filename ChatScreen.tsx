@@ -1,4 +1,5 @@
 "use client";
+
 import { useEffect, useRef, useState } from "react";
 import { TutorProfile } from "@/lib/tutors";
 import { AmivoEngine, Level, Session } from "@/lib/amivoEngine";
@@ -7,150 +8,379 @@ import { useMic } from "@/lib/useMic";
 import { SttTelemetryOps } from "@/lib/sttTelemetry";
 import TutorPortrait from "./TutorPortrait";
 
-type Msg = { from: "user" | "cami"; text: string; tag?: string };
+type Msg = {
+  from: "user" | "cami";
+  text: string;
+  tag?: string;
+};
 
-export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; level: Level }) {
+export default function ChatScreen({
+  tutor,
+  level,
+}: {
+  tutor: TutorProfile;
+  level: Level;
+}) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("Online");
   const [portraitState, setPortraitState] = useState("welcome");
   const [showTelemetry, setShowTelemetry] = useState(false);
+
   const sessionRef = useRef<Session>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
-  const turnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Single authoritative conversation history.
+  const messagesRef = useRef<Msg[]>([]);
+
+  const turnTimerRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const pendingTextRef = useRef("");
 
+  function commitMessages(next: Msg[]) {
+    messagesRef.current = next;
+    setMessages(next);
+  }
+
+  function appendMessage(message: Msg) {
+    commitMessages([...messagesRef.current, message]);
+  }
+
   function appendCami(text: string, tag?: string) {
-    setMessages(m => [...m, { from: "cami", text, tag }]);
+    appendMessage({
+      from: "cami",
+      text,
+      tag,
+    });
   }
 
-async function respond(userText: string) {
-const historyBeforeUser = [...messages];
+  async function respond(userText: string) {
+    const cleanText = userText.trim();
 
-  setMessages(m => [...m, { from: "user", text: userText }]);
-    setStatus("Thinking…"); setPortraitState("thinking");
-   try {
-  const response = await fetch("/api/chat", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    if (!cleanText) return;
 
-    body: JSON.stringify({
-  message: userText,
- history: historyBeforeUser.map(m => ({
-    role: m.from === "user" ? "user" : "assistant",
-    content: m.text,
-  })),
-  level: level,
-  tutor: tutor.name,
-}),
-});
+    /*
+      IMPORTANT:
+      Capture everything Cami and the student said BEFORE
+      adding the new user message.
 
-  const data = await response.json();
+      The API receives:
+        history = previous conversation
+        message = newest student message
 
-  if (!response.ok) {
-    console.error("Chat API error:", data);
-    setStatus("Something went wrong");
-    return;
-  }
+      This prevents the newest user message from being
+      duplicated inside history.
+    */
+    const historyBeforeUser = [...messagesRef.current];
 
-  const reply = data.reply;
+    const userMessage: Msg = {
+      from: "user",
+      text: cleanText,
+    };
 
-  setPortraitState("speaking");
-  setStatus(`${tutor.name} is speaking…`);
-  appendCami(reply);
+    commitMessages([
+      ...messagesRef.current,
+      userMessage,
+    ]);
 
-  setTimeout(() => {
-    setPortraitState("welcome");
-    setStatus("Online");
-  }, 1200);
+    setStatus("Thinking…");
+    setPortraitState("thinking");
 
-} catch (error) {
-  console.error("Cami response error:", error);
-  setStatus("Connection error");
-}
-  }
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
 
-const mic = useMic((finalText) => {
-  pendingTextRef.current = pendingTextRef.current
-    ? `${pendingTextRef.current} ${finalText}`
-    : finalText;
+        headers: {
+          "Content-Type": "application/json",
+        },
 
-  if (turnTimerRef.current) {
-    clearTimeout(turnTimerRef.current);
-  }
+        body: JSON.stringify({
+          message: cleanText,
 
-  turnTimerRef.current = setTimeout(() => {
-    const text = pendingTextRef.current.trim();
-    pendingTextRef.current = "";
+          history: historyBeforeUser.map((m) => ({
+            role:
+              m.from === "user"
+                ? "user"
+                : "assistant",
+            content: m.text,
+          })),
 
-    if (text) {
-      respond(text);
+          level,
+          tutor: tutor.name,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error("Chat API error:", data);
+        setStatus("Something went wrong");
+        setPortraitState("welcome");
+        return;
+      }
+
+      const reply =
+        typeof data.reply === "string"
+          ? data.reply.trim()
+          : "";
+
+      if (!reply) {
+        console.error(
+          "Chat API returned an empty reply:",
+          data
+        );
+
+        setStatus("Something went wrong");
+        setPortraitState("welcome");
+        return;
+      }
+
+      setPortraitState("speaking");
+      setStatus(`${tutor.name} is speaking…`);
+
+      appendCami(reply);
+
+      setTimeout(() => {
+        setPortraitState("welcome");
+        setStatus("Online");
+      }, 1200);
+    } catch (error) {
+      console.error(
+        "Cami response error:",
+        error
+      );
+
+      setStatus("Connection error");
+      setPortraitState("welcome");
     }
-  }, 700);
-});
+  }
 
+  /*
+    Deepgram can produce multiple final transcript chunks
+    during one spoken turn.
+
+    Combine those chunks before sending them to Cami.
+  */
+  const mic = useMic((finalText) => {
+    const chunk = finalText.trim();
+
+    if (!chunk) return;
+
+    pendingTextRef.current =
+      pendingTextRef.current
+        ? `${pendingTextRef.current} ${chunk}`
+        : chunk;
+
+    if (turnTimerRef.current) {
+      clearTimeout(turnTimerRef.current);
+    }
+
+    /*
+      1.2 seconds gives Deepgram more time to finish a
+      natural sentence before Cami responds.
+    */
+    turnTimerRef.current = setTimeout(() => {
+      const text =
+        pendingTextRef.current.trim();
+
+      pendingTextRef.current = "";
+      turnTimerRef.current = null;
+
+      if (text) {
+        void respond(text);
+      }
+    }, 1200);
+  });
+
+  /*
+    Add Cami's opening only once.
+  */
   useEffect(() => {
     if (startedRef.current) return;
+
     startedRef.current = true;
-    appendCami(AmivoEngine.opening(tutor, level));
+
+    appendCami(
+      AmivoEngine.opening(tutor, level)
+    );
   }, [tutor, level]);
 
+  /*
+    Keep the newest message visible.
+  */
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+    });
   }, [messages]);
 
+  /*
+    Show listening state while the mic is active.
+  */
   useEffect(() => {
-    setPortraitState(mic.state === "listening" ? "listening" : portraitState);
-  }, [mic.state]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (mic.state === "listening") {
+      setPortraitState("listening");
+    }
+  }, [mic.state]);
+
+  /*
+    Clean up an unfinished speech timer if the component
+    disappears.
+  */
+  useEffect(() => {
+    return () => {
+      if (turnTimerRef.current) {
+        clearTimeout(turnTimerRef.current);
+      }
+    };
+  }, []);
 
   function send() {
     const text = input.trim();
+
     if (!text) return;
+
     setInput("");
-    respond(text);
+
+    void respond(text);
   }
 
   function lastCamiText(): string | null {
-    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].from === "cami") return messages[i].text;
+    const history = messagesRef.current;
+
+    for (
+      let i = history.length - 1;
+      i >= 0;
+      i--
+    ) {
+      if (history[i].from === "cami") {
+        return history[i].text;
+      }
+    }
+
     return null;
   }
 
   function runControl(kind: string) {
-    const text = controlAction(kind, level, sessionRef.current, lastCamiText());
-    appendCami(text, kind.toUpperCase());
+    const text = controlAction(
+      kind,
+      level,
+      sessionRef.current,
+      lastCamiText()
+    );
+
+    appendCami(
+      text,
+      kind.toUpperCase()
+    );
   }
 
   return (
     <div className="screen-body chat-screen">
       <header className="app-header">
-        <div className="portrait-wrap header-portrait"><TutorPortrait tutor={tutor} state={portraitState} /></div>
+        <div className="portrait-wrap header-portrait">
+          <TutorPortrait
+            tutor={tutor}
+            state={portraitState}
+          />
+        </div>
+
         <div className="titles">
-          <h1>{tutor.name} · {tutor.city}</h1>
+          <h1>
+            {tutor.name} · {tutor.city}
+          </h1>
           <p>{status}</p>
         </div>
-        <button className="icon-flat" onClick={() => setShowTelemetry(s => !s)} aria-label="STT telemetry">📊</button>
+
+        <button
+          className="icon-flat"
+          onClick={() =>
+            setShowTelemetry((s) => !s)
+          }
+          aria-label="STT telemetry"
+        >
+          📊
+        </button>
       </header>
 
       {showTelemetry && (
         <div className="telemetry-panel">
-          <div className="t-row"><span>STT provider</span><span>{mic.providerName}</span></div>
-          <div className="t-row"><span>Mic time this session</span><span>{Math.floor(SttTelemetryOps.liveMs(mic.telemetry) / 1000)}s</span></div>
-          <div className="t-row"><span>Final transcripts</span><span>{mic.telemetry.finalCount}</span></div>
-          <div className="t-row"><span>Characters transcribed</span><span>{mic.telemetry.totalChars}</span></div>
-          <div className="t-row"><span>Estimated STT cost</span><span>${SttTelemetryOps.estimateCost(mic.telemetry).toFixed(4)}</span></div>
-          {mic.lastError && <div className="t-row"><span>Last mic error</span><span>{mic.lastError}</span></div>}
+          <div className="t-row">
+            <span>STT provider</span>
+            <span>{mic.providerName}</span>
+          </div>
+
+          <div className="t-row">
+            <span>Mic time this session</span>
+            <span>
+              {Math.floor(
+                SttTelemetryOps.liveMs(
+                  mic.telemetry
+                ) / 1000
+              )}
+              s
+            </span>
+          </div>
+
+          <div className="t-row">
+            <span>Final transcripts</span>
+            <span>
+              {mic.telemetry.finalCount}
+            </span>
+          </div>
+
+          <div className="t-row">
+            <span>
+              Characters transcribed
+            </span>
+            <span>
+              {mic.telemetry.totalChars}
+            </span>
+          </div>
+
+          <div className="t-row">
+            <span>Estimated STT cost</span>
+            <span>
+              $
+              {SttTelemetryOps.estimateCost(
+                mic.telemetry
+              ).toFixed(4)}
+            </span>
+          </div>
+
+          {mic.lastError && (
+            <div className="t-row">
+              <span>Last mic error</span>
+              <span>{mic.lastError}</span>
+            </div>
+          )}
         </div>
       )}
 
-      <div className="chat-scroll" ref={scrollRef}>
+      <div
+        className="chat-scroll"
+        ref={scrollRef}
+      >
         {messages.map((m, i) => (
-          <div key={i} className={`msg-row from-${m.from}`}>
-            {m.from === "cami" && <div className="msg-av"><TutorPortrait tutor={tutor} /></div>}
+          <div
+            key={i}
+            className={`msg-row from-${m.from}`}
+          >
+            {m.from === "cami" && (
+              <div className="msg-av">
+                <TutorPortrait tutor={tutor} />
+              </div>
+            )}
+
             <div className="bubble">
-              {m.tag && <span className="tag">{m.tag}</span>}
+              {m.tag && (
+                <span className="tag">
+                  {m.tag}
+                </span>
+              )}
+
               {m.text}
             </div>
           </div>
@@ -158,36 +388,108 @@ const mic = useMic((finalText) => {
       </div>
 
       {mic.level > 0 && (
-        <div className="level-meter"><div className="level-meter-fill" style={{ width: `${mic.level * 100}%` }} /></div>
+        <div className="level-meter">
+          <div
+            className="level-meter-fill"
+            style={{
+              width: `${mic.level * 100}%`,
+            }}
+          />
+        </div>
       )}
-      {mic.partial && <div className="partial-row">{mic.partial}</div>}
+
+      {mic.partial && (
+        <div className="partial-row">
+          {mic.partial}
+        </div>
+      )}
 
       <div className="control-row">
-        <button className="ctrl-btn" onClick={() => runControl("explain")}>💡 Explain</button>
-        <button className="ctrl-btn" onClick={() => runControl("slower")}>🐢 Slower</button>
-        <button className="ctrl-btn" onClick={() => runControl("repeat")}>🔁 Repeat</button>
-        <button className="ctrl-btn" onClick={() => runControl("translate")}>🌐 Translate</button>
+        <button
+          className="ctrl-btn"
+          onClick={() =>
+            runControl("explain")
+          }
+        >
+          💡 Explain
+        </button>
+
+        <button
+          className="ctrl-btn"
+          onClick={() =>
+            runControl("slower")
+          }
+        >
+          🐢 Slower
+        </button>
+
+        <button
+          className="ctrl-btn"
+          onClick={() =>
+            runControl("repeat")
+          }
+        >
+          🔁 Repeat
+        </button>
+
+        <button
+          className="ctrl-btn"
+          onClick={() =>
+            runControl("translate")
+          }
+        >
+          🌐 Translate
+        </button>
       </div>
 
       <div className="voice-note">
-        {mic.supported ? "Tap the mic and speak, or type below." : "Voice input isn't supported in this browser — type your message below."}
+        {mic.supported
+          ? "Tap the mic and speak, or type below."
+          : "Voice input isn't supported in this browser — type your message below."}
       </div>
 
       <div className="composer">
         <button
-          className={"icon-btn mic" + (mic.state === "listening" ? " listening" : "") + (!mic.supported ? " unsupported" : "")}
-          onClick={() => (mic.state === "listening" ? mic.stop() : mic.start())}
+          className={
+            "icon-btn mic" +
+            (mic.state === "listening"
+              ? " listening"
+              : "") +
+            (!mic.supported
+              ? " unsupported"
+              : "")
+          }
+          onClick={() =>
+            mic.state === "listening"
+              ? mic.stop()
+              : mic.start()
+          }
           aria-label="Voice input"
         >
-          <span className="mic-ring" />🎙️
+          <span className="mic-ring" />
+          🎙️
         </button>
+
         <input
           value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") send(); }}
+          onChange={(e) =>
+            setInput(e.target.value)
+          }
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              send();
+            }
+          }}
           placeholder="Escribe algo… or type in English"
         />
-        <button className="icon-btn send" onClick={send} aria-label="Send">➤</button>
+
+        <button
+          className="icon-btn send"
+          onClick={send}
+          aria-label="Send"
+        >
+          ➤
+        </button>
       </div>
     </div>
   );
