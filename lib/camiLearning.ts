@@ -160,4 +160,25 @@ export async function saveLearningEvents(
   }
 
   console.log("Cami learning events saved to Supabase:", rows);
+}export async function loadDueLearningEvents(limit = 10) {
+  const now = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("learning_events")
+    .select("*")
+    .lte("next_review_at", now)
+    .order("importance", { ascending: false })
+    .order("created_at", { ascending: true })
+    .limit(limit);
+
+  if (error) {
+    console.error("Error loading due learning events:", error);
+    return [];
+  }
+
+  return data ?? [];
+}export async function testLoadDueLearningEvents() {
+  const events = await loadDueLearningEvents();
+  console.log("Due learning events:", events);
+  return events;
 }
