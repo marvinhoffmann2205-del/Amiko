@@ -7,7 +7,6 @@ import {
   buildConversationContext,
 } from "../../../lib/camiBrain";
 import { MEMORY_SYSTEM_PROMPT, saveMemories, formatMemoriesForCami, extractMemories, loadMemories } from "../../../lib/camiMemory";
-import { extractLearningEvents } from "../../../lib/camiLearning";
 
 export async function POST(req: Request) {
   try {
@@ -138,17 +137,6 @@ ${repairInstruction}
       })
       .catch((error) => {
         console.error("Memory extraction failed:", error);
-      });
-
-    // Analyze the student's message for useful learning moments.
-    extractLearningEvents(message, apiKey)
-      .then((events) => {
-        if (events.length > 0) {
-          console.log("Cami learning events:", events);
-        }
-      })
-      .catch((error) => {
-        console.error("Learning extraction failed:", error);
       });
 
     return NextResponse.json({ reply });
