@@ -1,3 +1,5 @@
+import { supabaseAdmin as supabase } from "./supabase";
+
 export type LearningEventType =
   | "vocabulary"
   | "grammar"
@@ -129,4 +131,33 @@ export async function extractLearningEvents(
     console.error("Learning extraction JSON parse failed:", error, text);
     return [];
   }
+}
+
+export async function saveLearningEvents(
+  events: LearningExtraction["events"]
+) {
+  if (!events || events.length === 0) return;
+
+  const rows = events.map((event) => ({
+    type: event.type,
+    original: event.original,
+    correction: event.correction ?? null,
+    meaning: event.meaning ?? null,
+    explanation: event.explanation ?? null,
+    importance: event.importance ?? 5,
+    mastery: 0,
+    review_count: 0,
+    next_review_at: new Date().toISOString(),
+  }));
+
+  const { error } = await supabase
+    .from("learning_events")
+    .insert(rows);
+
+  if (error) {
+    console.error("Error saving Cami learning events:", error);
+    return;
+  }
+
+  console.log("Cami learning events saved to Supabase:", rows);
 }

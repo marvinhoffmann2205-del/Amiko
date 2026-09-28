@@ -7,7 +7,7 @@ import {
   buildConversationContext,
 } from "../../../lib/camiBrain";
 import { MEMORY_SYSTEM_PROMPT, saveMemories, formatMemoriesForCami, extractMemories, loadMemories } from "../../../lib/camiMemory";
-import { extractLearningEvents } from "../../../lib/camiLearning";
+import { extractLearningEvents, saveLearningEvents } from "../../../lib/camiLearning";
 
 export async function POST(req: Request) {
   try {
@@ -145,6 +145,7 @@ ${repairInstruction}
       .then((events) => {
         if (events.length > 0) {
           console.log("Cami learning events:", events);
+          saveLearningEvents(events);
         }
       })
       .catch((error) => {
