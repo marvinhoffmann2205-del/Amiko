@@ -15,15 +15,19 @@ type LearningEvent = {
   next_review_at: string;
 };
 
+type GradeResult = "correct" | "almost" | "incorrect";
+
 export default function LearnPage() {
   const [events, setEvents] = useState<LearningEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [userAnswer, setUserAnswer] = useState("");
-  const [answerResult, setAnswerResult] = useState<"correct" | "incorrect" | null>(null);
+  const [answerResult, setAnswerResult] =
+    useState<GradeResult | null>(null);
+  const [feedback, setFeedback] = useState("");
+  const [betterSpanish, setBetterSpanish] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
 
   useEffect(() => {
     async function loadReviews() {
@@ -45,70 +49,94 @@ export default function LearnPage() {
   }, []);
 
   async function checkAnswer() {
-  if (!userAnswer.trim()) return;
+    if (!userAnswer.trim() || submitting) return;
 
-  const event = events[currentIndex];
-  if (!event) return;
+    const event = events[currentIndex];
+    if (!event) return;
 
-const normalize = (text: string) =>
-  text
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[.,!?¿¡;:]/g, "")
-    .replace(/\s+/g, " ");
+    setSubmitting(true);
 
-  const userNormalized = normalize(userAnswer);
-const correctionNormalized = normalize(event.correction ?? "");
+    try {
+      const gradeResponse = await fetch("/api/learning-grade", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          original: event.original,
+          correction: event.correction,
+          meaning: event.meaning,
+          answer: userAnswer,
+        }),
+      });
 
-const removeOptionalYo = (text: string) =>
-  text
-    .replace(/\byo\b/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+      const gradeData = await gradeResponse.json();
 
-const correctionOptions = correctionNormalized
-  .split("/")
-  .map((option) => option.trim());
+      if (!gradeResponse.ok || !gradeData.success) {
+        throw new Error(
+          gradeData.error || "AI grading failed"
+        );
+      }
 
-const correct = correctionOptions.some((option) =>
-  userNormalized === option ||
-  removeOptionalYo(userNormalized) === removeOptionalYo(option)
-);
-  setAnswerResult(correct ? "correct" : "incorrect");
-  setShowAnswer(true);
-  setSubmitting(true);
+      const result = gradeData.result as GradeResult;
 
-  try {
-    const response = await fetch("/api/learning-review", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        id: event.id,
-        correct,
-        currentMastery: event.mastery,
-        currentReviewCount: event.review_count,
-      }),
-    });
+      setAnswerResult(result);
+      setFeedback(gradeData.feedback ?? "");
+      setBetterSpanish(
+        gradeData.betterSpanish ||
+          event.correction ||
+          ""
+      );
+      setShowAnswer(true);
 
-    const data = await response.json();
+      const reviewResponse = await fetch(
+        "/api/learning-review",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: event.id,
+            correct: result === "correct",
+            currentMastery: event.mastery,
+            currentReviewCount: event.review_count,
+          }),
+        }
+      );
 
-    if (!data.success) {
-      console.error("Could not update review:", data);
+      const reviewData = await reviewResponse.json();
+
+      if (!reviewResponse.ok || !reviewData.success) {
+        console.error(
+          "Could not update review:",
+          reviewData
+        );
+      }
+    } catch (error) {
+      console.error("Learn checkAnswer error:", error);
+    } finally {
+      setSubmitting(false);
     }
-  } catch (error) {
-    console.error("Could not submit review:", error);
-  } finally {
-    setSubmitting(false);
   }
-}
 
+  function nextQuestion() {
+    if (currentIndex >= events.length - 1) return;
+
+    setCurrentIndex((index) => index + 1);
+    setShowAnswer(false);
+    setUserAnswer("");
+    setAnswerResult(null);
+    setFeedback("");
+    setBetterSpanish("");
+  }
 
   if (loading) {
-    return <main style={{ padding: 40 }}>Loading your review...</main>;
+    return (
+      <main style={{ padding: 40 }}>
+        Loading your review...
+      </main>
+    );
   }
 
   if (events.length === 0) {
@@ -151,89 +179,95 @@ const correct = correctionOptions.some((option) =>
 
         <h2>{event.original}</h2>
 
-       <div style={{ marginTop: 24 }}>
-  <input
-    type="text"
-    value={userAnswer}
-    onChange={(e) => setUserAnswer(e.target.value)}
-    placeholder="Type the correct Spanish..."
-    disabled={submitting}
-    style={{
-      width: "100%",
-      padding: 12,
-      fontSize: 16,
-      borderRadius: 8,
-      border: "1px solid #ccc",
-      marginBottom: 12,
-    }}
-  />
+        <div style={{ marginTop: 24 }}>
+          <input
+            type="text"
+            value={userAnswer}
+            onChange={(e) =>
+              setUserAnswer(e.target.value)
+            }
+            onKeyDown={(e) => {
+              if (
+                e.key === "Enter" &&
+                !submitting &&
+                userAnswer.trim()
+              ) {
+                checkAnswer();
+              }
+            }}
+            placeholder="Type the correct Spanish..."
+            disabled={submitting || showAnswer}
+            style={{
+              width: "100%",
+              padding: 12,
+              fontSize: 16,
+              borderRadius: 8,
+              border: "1px solid #ccc",
+              marginBottom: 12,
+            }}
+          />
 
-  <button
-    disabled={submitting || !userAnswer.trim()}
-    onClick={async () => {
-      setSubmitting(true);
+          {!showAnswer && (
+            <button
+              type="button"
+              disabled={
+                submitting || !userAnswer.trim()
+              }
+              onClick={checkAnswer}
+            >
+              {submitting
+                ? "Checking..."
+                : "Check answer"}
+            </button>
+          )}
 
-      const correct =
-        userAnswer.trim().toLowerCase() ===
-        (event.correction ?? "").trim().toLowerCase();
+          {showAnswer && (
+            <div style={{ marginTop: 20 }}>
+              <p>
+                <strong>
+                  {answerResult === "correct"
+                    ? "✅ Correct!"
+                    : answerResult === "almost"
+                    ? "🟡 Almost!"
+                    : "❌ Not quite"}
+                </strong>
+              </p>
 
-      setAnswerResult(correct ? "correct" : "incorrect");
-      setShowAnswer(true);
+              {feedback && <p>{feedback}</p>}
 
-      try {
-        await fetch("/api/learning-review", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            id: event.id,
-            correct,
-          }),
-        });
-      } catch (error) {
-        console.error("Could not save review:", error);
-      } finally {
-        setSubmitting(false);
-      }
-    }}
-  >
-    Check answer
-  </button>
+              <p>
+                <strong>Better Spanish:</strong>
+              </p>
 
-  {showAnswer && (
-    <div style={{ marginTop: 20 }}>
-      <p>
-        <strong>
-          {answerResult === "correct" ? "✅ Correct!" : "❌ Not quite"}
-        </strong>
-      </p>
+              <h2>
+                {betterSpanish ||
+                  event.correction}
+              </h2>
 
-      <p>
-        <strong>Better Spanish:</strong>
-      </p>
+              {event.explanation && (
+                <p>{event.explanation}</p>
+              )}
 
-      <h2>{event.correction}</h2>
+              {currentIndex <
+                events.length - 1 && (
+                <button
+                  type="button"
+                  onClick={nextQuestion}
+                >
+                  Next
+                </button>
+              )}
 
-      {event.explanation && <p>{event.explanation}</p>}
-
-      <button
-        onClick={() => {
-          if (currentIndex < events.length - 1) {
-            setCurrentIndex(currentIndex + 1);
-            setShowAnswer(false);
-            setUserAnswer("");
-            setAnswerResult(null);
-          }
-        }}
-      >
-        Next
-      </button>
-    </div>
-  )}
-</div>
-    </div>
-  </main>
-);
+              {currentIndex ===
+                events.length - 1 && (
+                <p>
+                  🎉 Review complete!
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </main>
+  );
 }
-            

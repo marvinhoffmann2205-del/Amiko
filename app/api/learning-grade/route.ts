@@ -120,6 +120,8 @@ Return ONLY valid JSON in exactly this shape:
       throw new Error("Invalid grading result");
     }
 
+    console.log("AI GRADE RESULT:", parsed);
+
     return NextResponse.json({
       success: true,
       result: parsed.result,
