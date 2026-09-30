@@ -52,6 +52,25 @@ Do NOT save:
 - filler conversation
 - repeated versions of the same learning point
 
+MULTIPLE LEARNING EVENTS:
+- A single student message may contain multiple independent learning opportunities.
+- Identify ALL genuinely useful learning opportunities in the message, not only the most important one.
+- Create a SEPARATE event for each distinct mistake or learning point.
+- If the student makes two different grammar mistakes, return two events.
+- If the student makes a grammar mistake and a vocabulary mistake, return two events.
+- Do not combine unrelated mistakes into one event.
+- Do not create duplicate events for the same underlying mistake.
+- Ignore tiny stylistic issues, but do not discard a real mistake merely because another more important mistake exists.
+
+Example:
+Student: "Ayer yo voy al gimnasio y después yo comí con mis amigo."
+
+This contains at least two distinct learning points:
+1. "voy" -> "fui" because "ayer" requires past tense here.
+2. "mis amigo" -> "mis amigos" because the noun must agree with "mis".
+
+Return BOTH as separate objects inside the "events" array.
+
 For each learning event:
 - type must be vocabulary, grammar, pronunciation, expression, or comprehension
 - original should contain the relevant student wording
@@ -95,12 +114,21 @@ export async function extractLearningEvents(
       model: "claude-haiku-4-5-20251001",
       max_tokens: 500,
       system: LEARNING_SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: message,
-        },
-      ],
+     messages: [
+  {
+    role: "user",
+    content: `Analyze the ENTIRE student message below.
+
+You must scan from beginning to end before producing your answer.
+Return a separate learning event for EVERY distinct genuine learning mistake.
+Do not stop after finding the first mistake.
+If there are 2 distinct mistakes, return 2 event objects.
+If there are 3 distinct mistakes, return 3 event objects.
+
+STUDENT MESSAGE:
+${message}`,
+  },
+],
     }),
   });
 
@@ -181,4 +209,56 @@ export async function saveLearningEvents(
   const events = await loadDueLearningEvents();
   console.log("Due learning events:", events);
   return events;
+}
+export async function updateLearningReview(
+  id: string,
+  correct: boolean,
+  currentMastery: number,
+  currentReviewCount: number
+) {
+  const newReviewCount = currentReviewCount + 1;
+
+  const newMastery = correct
+    ? Math.min(currentMastery + 1, 5)
+    : Math.max(currentMastery - 1, 0);
+
+  let delayMinutes: number;
+
+  if (!correct) {
+    delayMinutes = 10;
+  } else {
+    const intervals = [
+      60,       // mastery 0
+      1440,     // mastery 1 = 1 day
+      4320,     // mastery 2 = 3 days
+      10080,    // mastery 3 = 7 days
+      20160,    // mastery 4 = 14 days
+      43200,    // mastery 5 = 30 days
+    ];
+
+    delayMinutes = intervals[newMastery];
+  }
+
+  const nextReview = new Date(
+    Date.now() + delayMinutes * 60 * 1000
+  ).toISOString();
+
+  const { data, error } = await supabase
+    .from("learning_events")
+    .update({
+      mastery: newMastery,
+      review_count: newReviewCount,
+      next_review_at: nextReview,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Error updating learning review:", error);
+    throw error;
+  }
+
+  return data;
 }
