@@ -98,7 +98,7 @@ export default function LearnPage() {
           },
           body: JSON.stringify({
             id: event.id,
-            correct: result === "correct",
+            result,
             currentMastery: event.mastery,
             currentReviewCount: event.review_count,
           }),

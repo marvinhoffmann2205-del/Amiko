@@ -5,12 +5,12 @@ export async function POST(req: Request) {
   try {
     const {
       id,
-      correct,
+      result,
       currentMastery,
       currentReviewCount,
     } = await req.json();
 
-    if (!id || typeof correct !== "boolean") {
+    if (!id || !["correct", "almost", "incorrect"].includes(result)) {
       return NextResponse.json(
         { success: false, error: "Invalid review data" },
         { status: 400 }
@@ -19,7 +19,7 @@ export async function POST(req: Request) {
 
     const updatedEvent = await updateLearningReview(
       id,
-      correct,
+      result,
       currentMastery ?? 0,
       currentReviewCount ?? 0
     );

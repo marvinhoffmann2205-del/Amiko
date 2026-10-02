@@ -210,22 +210,25 @@ export async function saveLearningEvents(
   console.log("Due learning events:", events);
   return events;
 }
+export type LearningReviewResult = "correct" | "almost" | "incorrect";
+
 export async function updateLearningReview(
   id: string,
-  correct: boolean,
+  result: LearningReviewResult,
   currentMastery: number,
   currentReviewCount: number
 ) {
   const newReviewCount = currentReviewCount + 1;
 
-  const newMastery = correct
-    ? Math.min(currentMastery + 1, 5)
-    : Math.max(currentMastery - 1, 0);
+  const masteryChange = result === "correct" ? 2 : result === "almost" ? 1 : 0;
+  const newMastery = Math.max(0, Math.min(currentMastery + masteryChange, 5));
 
   let delayMinutes: number;
 
-  if (!correct) {
+  if (result === "incorrect") {
     delayMinutes = 10;
+  } else if (result === "almost") {
+    delayMinutes = 30;
   } else {
     const intervals = [
       60,       // mastery 0
