@@ -29,32 +29,41 @@ export default function LearnPage() {
   const [betterSpanish, setBetterSpanish] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    async function loadReviews() {
-      try {
-        const response = await fetch("/api/learning-test");
-        const data = await response.json();
+  const [loadError, setLoadError] = useState("");
+  const [reviewError, setReviewError] = useState("");
+  const [reviewSaved, setReviewSaved] = useState(false);
 
-        if (data.success) {
-          setEvents(data.events ?? []);
-        }
-      } catch (error) {
-        console.error("Could not load learning reviews:", error);
-      } finally {
-        setLoading(false);
+  async function loadReviews() {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const response = await fetch("/api/learning-test");
+      const data = await response.json();
+
+      if (!response.ok || !data.success || !Array.isArray(data.events)) {
+        throw new Error("Could not load reviews");
       }
+      setEvents(data.events);
+    } catch (error) {
+      console.error("Could not load learning reviews:", error);
+      setLoadError("Could not load your reviews. Please try again.");
+    } finally {
+      setLoading(false);
     }
+  }
 
+  useEffect(() => {
     loadReviews();
   }, []);
 
   async function checkAnswer() {
-    if (!userAnswer.trim() || submitting) return;
+    if (!userAnswer.trim() || submitting || showAnswer) return;
 
     const event = events[currentIndex];
     if (!event) return;
 
     setSubmitting(true);
+    setReviewError("");
 
     try {
       const gradeResponse = await fetch("/api/learning-grade", {
@@ -78,6 +87,9 @@ export default function LearnPage() {
         );
       }
 
+      if (!["correct", "almost", "incorrect"].includes(gradeData.result)) {
+        throw new Error("Invalid grading result");
+      }
       const result = gradeData.result as GradeResult;
 
       setAnswerResult(result);
@@ -89,39 +101,37 @@ export default function LearnPage() {
       );
       setShowAnswer(true);
 
-      const reviewResponse = await fetch(
-        "/api/learning-review",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            id: event.id,
-            result,
-            currentMastery: event.mastery,
-            currentReviewCount: event.review_count,
-          }),
-        }
-      );
-
-      const reviewData = await reviewResponse.json();
-
-      if (!reviewResponse.ok || !reviewData.success) {
-        console.error(
-          "Could not update review:",
-          reviewData
-        );
-      }
+      await saveReview(event.id, result);
     } catch (error) {
       console.error("Learn checkAnswer error:", error);
+      setReviewError("Could not check your answer. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function saveReview(id: string, result: GradeResult) {
+    setSubmitting(true);
+    setReviewError("");
+    try {
+      const response = await fetch("/api/learning-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, result }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error("Review save failed");
+      setReviewSaved(true);
+    } catch (error) {
+      console.error("Could not save review:", error);
+      setReviewError("Could not save your progress. Please try saving again.");
     } finally {
       setSubmitting(false);
     }
   }
 
   function nextQuestion() {
-    if (currentIndex >= events.length - 1) return;
+    if (submitting || !reviewSaved || currentIndex >= events.length - 1) return;
 
     setCurrentIndex((index) => index + 1);
     setShowAnswer(false);
@@ -129,12 +139,23 @@ export default function LearnPage() {
     setAnswerResult(null);
     setFeedback("");
     setBetterSpanish("");
+    setReviewError("");
+    setReviewSaved(false);
   }
 
   if (loading) {
     return (
       <main style={{ padding: 40 }}>
         Loading your review...
+      </main>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <main style={{ padding: 40 }}>
+        <p role="alert">{loadError}</p>
+        <button type="button" onClick={loadReviews}>Try again</button>
       </main>
     );
   }
@@ -190,6 +211,7 @@ export default function LearnPage() {
               if (
                 e.key === "Enter" &&
                 !submitting &&
+                !showAnswer &&
                 userAnswer.trim()
               ) {
                 checkAnswer();
@@ -218,6 +240,18 @@ export default function LearnPage() {
               {submitting
                 ? "Checking..."
                 : "Check answer"}
+            </button>
+          )}
+
+          {reviewError && <p role="alert">{reviewError}</p>}
+
+          {showAnswer && !reviewSaved && (
+            <button
+              type="button"
+              disabled={submitting || !answerResult}
+              onClick={() => answerResult && saveReview(event.id, answerResult)}
+            >
+              {submitting ? "Saving..." : "Try saving again"}
             </button>
           )}
 
@@ -253,12 +287,13 @@ export default function LearnPage() {
                 <button
                   type="button"
                   onClick={nextQuestion}
+                  disabled={submitting || !reviewSaved}
                 >
                   Next
                 </button>
               )}
 
-              {currentIndex ===
+              {reviewSaved && currentIndex ===
                 events.length - 1 && (
                 <p>
                   🎉 Review complete!

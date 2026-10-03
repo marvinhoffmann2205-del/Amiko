@@ -6,8 +6,6 @@ export async function POST(req: Request) {
     const {
       id,
       result,
-      currentMastery,
-      currentReviewCount,
     } = await req.json();
 
     if (!id || !["correct", "almost", "incorrect"].includes(result)) {
@@ -19,9 +17,7 @@ export async function POST(req: Request) {
 
     const updatedEvent = await updateLearningReview(
       id,
-      result,
-      currentMastery ?? 0,
-      currentReviewCount ?? 0
+      result
     );
 
     return NextResponse.json({

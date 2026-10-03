@@ -1,4 +1,6 @@
 import { supabaseAdmin as supabase } from "./supabase";
+import { reviewProgress, selectLearningAttention, type LearningReviewResult } from "./learningProgression";
+export type { LearningReviewResult } from "./learningProgression";
 
 export type LearningEventType =
   | "vocabulary"
@@ -11,14 +13,17 @@ export type LearningEvent = {
   id: string;
   type: LearningEventType;
   original: string;
-  correction?: string;
-  meaning?: string;
-  explanation?: string;
+  correction: string | null;
+  meaning: string | null;
+  explanation: string | null;
   importance: number;
   mastery: number;
-  timesSeen: number;
-  createdAt: string;
-  updatedAt: string;
+  review_count: number;
+  next_review_at: string;
+  created_at: string;
+  updated_at: string;
+  last_result?: LearningReviewResult | null;
+  incorrect_streak?: number | null;
 };
 
 export type LearningExtraction = {
@@ -175,6 +180,8 @@ export async function saveLearningEvents(
     importance: event.importance ?? 5,
     mastery: 0,
     review_count: 0,
+    last_result: null,
+    incorrect_streak: 0,
     next_review_at: new Date().toISOString(),
   }));
 
@@ -188,80 +195,51 @@ export async function saveLearningEvents(
   }
 
   console.log("Cami learning events saved to Supabase:", rows);
-}export async function loadDueLearningEvents(limit = 10) {
-  const now = new Date().toISOString();
+}
 
-  const { data, error } = await supabase
-    .from("learning_events")
-    .select("*")
-    .lte("next_review_at", now)
-    .order("importance", { ascending: false })
-    .order("created_at", { ascending: true })
-    .limit(limit);
-
-  if (error) {
-    console.error("Error loading due learning events:", error);
-    return [];
+export async function loadDueLearningEvents(limit = 5): Promise<LearningEvent[]> {
+  const now = Date.now();
+  const candidates: LearningEvent[] = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase
+      .from("learning_events")
+      .select("*")
+      .lte("next_review_at", new Date(now).toISOString())
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    const page = (data ?? []) as LearningEvent[];
+    candidates.push(...page);
+    if (page.length < pageSize) break;
   }
+  return selectLearningAttention(candidates, now, limit);
+}
 
-  return data ?? [];
-}export async function testLoadDueLearningEvents() {
+export async function testLoadDueLearningEvents() {
   const events = await loadDueLearningEvents();
   console.log("Due learning events:", events);
   return events;
 }
-export type LearningReviewResult = "correct" | "almost" | "incorrect";
-
 export async function updateLearningReview(
   id: string,
-  result: LearningReviewResult,
-  currentMastery: number,
-  currentReviewCount: number
+  result: LearningReviewResult
 ) {
-  const newReviewCount = currentReviewCount + 1;
-
-  const masteryChange = result === "correct" ? 2 : result === "almost" ? 1 : 0;
-  const newMastery = Math.max(0, Math.min(currentMastery + masteryChange, 5));
-
-  let delayMinutes: number;
-
-  if (result === "incorrect") {
-    delayMinutes = 10;
-  } else if (result === "almost") {
-    delayMinutes = 30;
-  } else {
-    const intervals = [
-      60,       // mastery 0
-      1440,     // mastery 1 = 1 day
-      4320,     // mastery 2 = 3 days
-      10080,    // mastery 3 = 7 days
-      20160,    // mastery 4 = 14 days
-      43200,    // mastery 5 = 30 days
-    ];
-
-    delayMinutes = intervals[newMastery];
-  }
-
-  const nextReview = new Date(
-    Date.now() + delayMinutes * 60 * 1000
-  ).toISOString();
+  // Use persisted state rather than potentially stale client counters.
+  const { data: current, error: loadError } = await supabase
+    .from("learning_events")
+    .select("mastery, review_count, incorrect_streak")
+    .eq("id", id)
+    .single();
+  if (loadError) throw loadError;
+  if (!current) throw new Error("Learning event not found");
 
   const { data, error } = await supabase
     .from("learning_events")
-    .update({
-      mastery: newMastery,
-      review_count: newReviewCount,
-      next_review_at: nextReview,
-      updated_at: new Date().toISOString(),
-    })
+    .update(reviewProgress(current, result))
     .eq("id", id)
     .select()
     .single();
-
-  if (error) {
-    console.error("Error updating learning review:", error);
-    throw error;
-  }
-
+  if (error) throw error;
   return data;
 }
