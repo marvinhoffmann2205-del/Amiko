@@ -17,10 +17,11 @@ function load(relative, mocks = {}) {
   }, Date, console });
   return exports;
 }
+const quality = load('lib/learningEventQuality.ts');
 const progression = load('lib/learningProgression.ts');
 const { attentionScore, selectLearningAttention, reviewProgress } = progression;
 const now = Date.parse('2026-10-02T12:00:00Z');
-const item = (id, overrides = {}) => ({id, mastery: 3, review_count: 1, importance: 5,
+const item = (id, overrides = {}) => ({id, original: `ayer voy ${id}`, correction: `ayer fui ${id}`, mastery: 3, review_count: 1, importance: 5,
   next_review_at: new Date(now).toISOString(), created_at: '2026-10-01T12:00:00Z', ...overrides});
 const ids = queue => Array.from(queue, row => row.id);
 
@@ -101,7 +102,7 @@ test('consecutive incorrect attempts accumulate; almost/correct reset the streak
 });
 
 function learningWith(db) {
-  return load('lib/camiLearning.ts', {'./supabase': {supabaseAdmin: db}, './learningProgression': progression});
+  return load('lib/camiLearning.ts', {'./supabase': {supabaseAdmin: db}, './learningProgression': progression, './learningEventQuality': quality});
 }
 test('loader paginates before ranking, including high-priority items on later pages', async () => {
   let offset, requests = 0;
@@ -155,4 +156,56 @@ test('review API validates outcomes and ignores stale client counters', async ()
     assert.equal((await route.POST({json:async () => payload})).status, 400);
   }
   assert.equal(calls.length, 3);
+});
+
+test('quality excludes only clear artifacts and trivial changes, preserving real learning', () => {
+  const decision = (original, correction, extra = {}) => quality.learningEventQuality({original, correction, ...extra});
+  for (const pair of [['Jo vivo','yo vivo'], ['cafe','café'], ['Tu estas aqui','Tú estás aquí'], ['¿YO VIVO!','yo vivo']]) {
+    assert.notEqual(decision(...pair), 'keep');
+  }
+  for (const pair of [['mañana fui','mañana voy'], ['es de cinco años','hace cinco años'],
+    ['mis amigo','mis amigos'], ['voy','soy'], ['fui','fue'], ['ano','año'], ['depende en ti','depende de ti']]) {
+    assert.equal(decision(...pair), 'keep');
+  }
+  assert.equal(decision('Jo vivo','yo vivo',{incorrect_streak:2}), 'keep');
+  assert.equal(decision('mañana fui','mañana voy',{explanation:'This is not a typo; use future tense.'}), 'keep');
+  assert.equal(decision('vivvo','vivo',{explanation:'Typo: duplicated letter.'}), 'artifact');
+  assert.equal(decision('vivvo','vivo'), 'keep'); // ambiguous edits are preserved
+  assert.equal(decision('...',''), 'malformed');
+  assert.equal(decision('hola',null), 'malformed');
+  assert.equal(decision('hola',null,{meaning:42}), 'malformed');
+  assert.equal(quality.learningEventQuality(null), 'malformed');
+  assert.equal(decision('desvelado',null,{meaning:'sleep deprived'}), 'keep');
+});
+
+test('quality deduplicates formatting and optional subject variants without merging distinct errors', () => {
+  const rows = [{original:'Yo mañana fui.',correction:'Yo mañana voy.',importance:1},
+    {original:'mañana fui',correction:'mañana voy',importance:8},
+    {original:'MAÑANA FUI!',correction:'mañana voy',importance:5},
+    {original:'mañana fui',correction:'mañana iré',importance:6}];
+  const result = quality.filterLearningEventQuality(rows, row => row.importance);
+  assert.equal(result.length,2); assert.equal(result[0], rows[1]);
+  assert.equal(rows.length,4);
+});
+
+test('loader filters historical noise before selection and preserves strongest duplicate review state', async () => {
+  const rows = [item('noise',{original:'Jo vivo',correction:'yo vivo',importance:10}),
+    item('accent',{original:'cafe',correction:'café'}),
+    item('tense',{original:'mañana fui',correction:'mañana voy'}),
+    item('duplicate',{original:'Mañana fui!',correction:'mañana voy',incorrect_streak:2,last_result:'incorrect'}),
+    item('usage',{original:'es de cinco años',correction:'hace cinco años'})];
+  const query = {select(){return this},lte(){return this},order(){return this},async range(){return {data:rows,error:null}}};
+  assert.deepEqual(ids(await learningWith({from:()=>query}).loadDueLearningEvents()), ['duplicate','usage']);
+  assert.equal(rows.length,5);
+});
+
+test('save filters new noise and duplicates; all-rejected batches do not call Supabase', async () => {
+  let rows, calls = 0;
+  const db = {from:()=>{calls++;return {async insert(value){rows=value;return {error:null}}}}};
+  const learning = learningWith(db);
+  await learning.saveLearningEvents([{type:'grammar',original:'Jo vivo',correction:'yo vivo',importance:5}]);
+  assert.equal(calls,0);
+  await learning.saveLearningEvents([{type:'grammar',original:'mañana fui',correction:'mañana voy',importance:8},
+    {type:'grammar',original:'Mañana fui!',correction:'mañana voy',importance:8}]);
+  assert.equal(rows.length,1); assert.equal(rows[0].original,'mañana fui');
 });

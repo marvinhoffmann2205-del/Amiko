@@ -1,5 +1,6 @@
 import { supabaseAdmin as supabase } from "./supabase";
-import { reviewProgress, selectLearningAttention, type LearningReviewResult } from "./learningProgression";
+import { filterLearningEventQuality } from "./learningEventQuality";
+import { attentionScore, reviewProgress, selectLearningAttention, type LearningReviewResult } from "./learningProgression";
 export type { LearningReviewResult } from "./learningProgression";
 
 export type LearningEventType =
@@ -171,7 +172,10 @@ export async function saveLearningEvents(
 ) {
   if (!events || events.length === 0) return;
 
-  const rows = events.map((event) => ({
+  const eligible = filterLearningEventQuality(events);
+  if (eligible.length === 0) return;
+
+  const rows = eligible.map((event) => ({
     type: event.type,
     original: event.original,
     correction: event.correction ?? null,
@@ -213,7 +217,9 @@ export async function loadDueLearningEvents(limit = 5): Promise<LearningEvent[]>
     candidates.push(...page);
     if (page.length < pageSize) break;
   }
-  return selectLearningAttention(candidates, now, limit);
+  const eligible = filterLearningEventQuality(candidates, event =>
+    (event.review_count > 0 ? 1000 : 0) + attentionScore(event, now));
+  return selectLearningAttention(eligible, now, limit);
 }
 
 export async function testLoadDueLearningEvents() {
