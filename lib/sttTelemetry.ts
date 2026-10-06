@@ -8,15 +8,21 @@ export type SttTelemetryState = {
   totalListenMs: number;
   finalCount: number;
   totalChars: number;
+  startupRequestedAt: number | null;
+  startupMs: Partial<Record<"token" | "microphone" | "socket" | "capture", number>>;
 };
 
 export function createSttTelemetry(): SttTelemetryState {
-  return { provider: "none", costPerMinute: 0, listenStartedAt: null, totalListenMs: 0, finalCount: 0, totalChars: 0 };
+  return { provider: "none", costPerMinute: 0, listenStartedAt: null, totalListenMs: 0, finalCount: 0, totalChars: 0, startupRequestedAt: null, startupMs: {} };
 }
 
 export const SttTelemetryOps = {
   setProvider(t: SttTelemetryState, name: string, costPerMinute = 0) {
     t.provider = name; t.costPerMinute = costPerMinute;
+  },
+  requestStartup(t: SttTelemetryState) { t.startupRequestedAt = Date.now(); t.startupMs = {}; },
+  recordStartup(t: SttTelemetryState, phase: "token" | "microphone" | "socket" | "capture") {
+    if (t.startupRequestedAt !== null) t.startupMs[phase] = Date.now() - t.startupRequestedAt;
   },
   startClock(t: SttTelemetryState) { t.listenStartedAt = Date.now(); },
   stopClock(t: SttTelemetryState) {

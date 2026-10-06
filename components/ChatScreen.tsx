@@ -22,7 +22,6 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
   const scrollRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
   const restartListeningRef = useRef<(() => void) | null>(null);
-  const stopListeningRef = useRef<(() => void) | null>(null);
 
   // Barge-in wiring: if the learner taps the mic while Cami's audio is
   // playing, useMic() calls this to stop her mid-sentence. Real interrupt
@@ -49,7 +48,7 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
     onAudioEnd: () => {
   setPortraitState("welcome");
   setStatus("Online");
-  mic.start();
+  restartListeningRef.current?.();
 },
 
     onError: (code: string) => {
@@ -124,7 +123,19 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
   }, [messages]);
 
   useEffect(() => {
-    setPortraitState(mic.state === "listening" ? "listening" : portraitState);
+    if (mic.state === "connecting") {
+      setStatus("Connecting microphone… Please wait");
+      setPortraitState("welcome");
+    } else if (mic.state === "listening") {
+      setStatus("Listening — speak now");
+      setPortraitState("listening");
+    } else if (mic.state === "error") {
+      setStatus("Microphone unavailable — tap to retry");
+      setPortraitState("welcome");
+    } else if (mic.state === "idle") {
+      setStatus(current => current.startsWith("Listening") || current.startsWith("Connecting microphone") ? "Online" : current);
+      setPortraitState(current => current === "listening" ? "welcome" : current);
+    }
   }, [mic.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function send() {
@@ -162,6 +173,9 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
           <div className="t-row"><span>Final transcripts</span><span>{mic.telemetry.finalCount}</span></div>
           <div className="t-row"><span>Characters transcribed</span><span>{mic.telemetry.totalChars}</span></div>
           <div className="t-row"><span>Estimated STT cost</span><span>${SttTelemetryOps.estimateCost(mic.telemetry).toFixed(4)}</span></div>
+          <div className="t-row"><span>Voice startup (request → phase)</span><span>
+            {Object.entries(mic.telemetry.startupMs).map(([phase, ms]) => `${phase}: ${ms} ms`).join(" · ") || "Not ready yet"}
+          </span></div>
           {mic.lastError && <div className="t-row"><span>Last mic error</span><span>{mic.lastError}</span></div>}
         </div>
       )}
@@ -190,8 +204,8 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
         <button className="ctrl-btn" onClick={() => runControl("translate")}>🌐 Translate</button>
       </div>
 
-      <div className="voice-note">
-        {voiceNotice
+      <div className="voice-note" aria-live="polite">
+        {mic.state === "connecting" ? "Connecting microphone… Wait for Listening before speaking." : voiceNotice
           ? voiceNotice
           : mic.supported ? "Tap the mic and speak, or type below." : "Voice input isn't supported in this browser — type your message below."}
       </div>
@@ -199,8 +213,9 @@ export default function ChatScreen({ tutor, level }: { tutor: TutorProfile; leve
       <div className="composer">
         <button
           className={"icon-btn mic" + (mic.state === "listening" ? " listening" : "") + (!mic.supported ? " unsupported" : "")}
-          onClick={() => (mic.state === "listening" ? mic.stop() : mic.start())}
-          aria-label="Voice input"
+          onClick={() => ((mic.state === "listening" || mic.state === "connecting") ? mic.stop() : mic.start())}
+          aria-label={mic.state === "connecting" ? "Cancel microphone connection" : "Voice input"}
+          aria-busy={mic.state === "connecting"}
         >
           <span className="mic-ring" />🎙️
         </button>
